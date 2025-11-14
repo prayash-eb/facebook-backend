@@ -3,6 +3,7 @@ import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.js";
 import authRouter from "./routes/auth.routes.js";
 import postRouter from "./routes/post.routes.js";
+import outlierThresholdRouter from "./routes/outer-threshold.route.js";
 
 const app: Application = express();
 
@@ -12,6 +13,7 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use("/api/v1/user", authRouter)
 app.use("/api/v1/post", postRouter)
+app.use("/api/v1/threshold", outlierThresholdRouter)
 
 
 app.get("/", (req: Request, res: Response) => {

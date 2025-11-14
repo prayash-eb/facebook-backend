@@ -22,10 +22,10 @@ export const requireAuthentication = async (req: Request, res: Response, next: N
         // Extract & validate header
         const authHeader = req.headers.authorization;
         if (!authHeader?.startsWith("Bearer ")) {
-            res.status(401).json({ message: "Authorization header missing or malformed" });
+            return res.status(401).json({ message: "Authorization header missing or malformed" });
         }
         const token = authHeader?.split(" ")[1];
-        if (!token) res.status(401).json({ message: "Missing Token" });
+        if (!token) return res.status(401).json({ message: "Missing Token" });
 
         const JWT_SECRET = process.env.JWT_SECRET;
         if (!JWT_SECRET) throw new Error("JWT_ACCESS_SECRET not configured");
@@ -35,6 +35,6 @@ export const requireAuthentication = async (req: Request, res: Response, next: N
         next();
     } catch (error: any) {
         console.error("Authentication Error", error)
-        res.status(500).json({ message: "Authentication error", error: error.message });
+        return res.status(500).json({ message: "Authentication error", error: error.message });
     }
 };

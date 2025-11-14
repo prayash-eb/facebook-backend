@@ -35,7 +35,6 @@ const userSchema = new Schema<IUser>({
     },
 });
 
-
 userSchema.pre("save", async function (next) {
     if (!this.isModified("password")) {
         next();
@@ -44,6 +43,4 @@ userSchema.pre("save", async function (next) {
     next();
 });
 
-
-
-export const User = model<IUser>("User", userSchema);
+export const User = model<IUser>("user", userSchema);
