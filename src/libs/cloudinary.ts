@@ -1,7 +1,5 @@
 
 import { Readable } from "stream";
-// import cloudinary from "../configs/cloudinary.js";
-
 import { v2 as cloudinary } from "cloudinary";
 import { config } from "dotenv";
 

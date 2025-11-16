@@ -6,7 +6,8 @@ import {
     createFriendRequest,
     deleteFriendRequests,
     getFriendRequests,
-    getFriends
+    getFriends,
+    unfriend
 } from "../controllers/friendship.controller.js";
 
 const friendshipRouter = Router()
@@ -16,5 +17,6 @@ friendshipRouter.post("/send-friend-request", requireAuthentication, createFrien
 friendshipRouter.get("/", requireAuthentication, getFriends)
 friendshipRouter.get("/requests", requireAuthentication, getFriendRequests)
 friendshipRouter.delete("/friend-request", requireAuthentication, deleteFriendRequests)
+friendshipRouter.delete("/unfriend", requireAuthentication, unfriend)
 
 export default friendshipRouter

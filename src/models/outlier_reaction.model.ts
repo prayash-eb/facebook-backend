@@ -12,7 +12,7 @@ interface IOutlierReaction extends Document {
     bucketId: string;
     isFull: boolean;
     count: number;
-    reactions: IBucketReaction;
+    reactions: IBucketReaction[];
     createdAt: Date;
     updatedAt: Date
 }

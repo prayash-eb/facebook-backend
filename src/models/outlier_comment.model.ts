@@ -15,7 +15,7 @@ interface IOutlierComment extends Document {
     bucketId: string;
     isFull: boolean;
     count: number;
-    comments: IBucketComment;
+    comments: IBucketComment[];
     createdAt: Date;
     updatedAt: Date
 }

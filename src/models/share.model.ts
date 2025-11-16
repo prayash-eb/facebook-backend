@@ -20,4 +20,4 @@ const shareSchema = new Schema<IShare>({
     timestamps: true
 })
 
-export const Friend = model<IShare>("shares", shareSchema) 
+export const Share = model<IShare>("shares", shareSchema) 

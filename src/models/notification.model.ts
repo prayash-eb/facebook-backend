@@ -25,4 +25,4 @@ const notificationSchema = new Schema<INotification>({
     timestamps: true
 })
 
-export const Friend = model<INotification>("notifications", notificationSchema) 
+export const Notification = model<INotification>("notifications", notificationSchema) 

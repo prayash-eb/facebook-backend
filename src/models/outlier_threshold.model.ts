@@ -4,9 +4,10 @@ interface IOutlierThreshold extends Document {
     reactionThreshold: number;
     commentThreshold: number;
     shareThreshold: number;
-    version: number
-    createdAt: Date,
-    updatedAt: Date
+    version: number;
+    enabled: boolean;
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 const outlierThresholdSchema = new Schema<IOutlierThreshold>({
@@ -26,8 +27,13 @@ const outlierThresholdSchema = new Schema<IOutlierThreshold>({
         type: Number,
         required: true
     },
+    enabled: {
+        type: Boolean,
+        default: false
+    }
 }, {
     timestamps: true
 })
 
 export const OutlierThreshold = model<IOutlierThreshold>("outlier_thresholds", outlierThresholdSchema)
+export type { IOutlierThreshold };

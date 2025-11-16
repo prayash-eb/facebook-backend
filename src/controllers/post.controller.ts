@@ -5,16 +5,39 @@ import { MAX_IMAGE_SIZE, MAX_VIDEO_SIZE } from "../middleware/upload.middleware.
 import { uploadToCloudinary } from "../libs/cloudinary.js";
 import { Types } from "mongoose";
 import { Friendship } from "../models/friendship.model.js";
+import { sanitizeString } from "../utils/validation.js";
+import { logControllerAction, logError, logValidationError } from "../utils/logger.js";
 
 export const createPost = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const userId = req.user?.id;
         const { textContent, privacy, tags, postType } = JSON.parse(req.body.data);
+        logControllerAction('PostController', 'createPost', userId?.toString(), { 
+            privacy, 
+            postType,
+            hasMedia: !!(req.files && (req.files as any[]).length > 0)
+        });
 
         const files = req.files as Express.Multer.File[] | undefined;
 
-        if (!textContent && (!files || files.length === 0))
+        if (!textContent && (!files || files.length === 0)) {
+            logValidationError('post', undefined, 'Post must have text or media', { userId: userId?.toString() });
             return res.status(400).json({ message: "Post must have text or media" });
+        }
+
+        // Validate text content length
+        if (textContent && textContent.length > 5000) {
+            logValidationError('textContent', textContent.length, 'Text too long', { userId: userId?.toString() });
+            return res.status(400).json({ message: "Post text content cannot exceed 5000 characters" });
+        }
+
+        // Validate privacy value
+        const validPrivacyOptions = ['public', 'friends', 'onlyme'];
+        if (privacy && !validPrivacyOptions.includes(privacy)) {
+            return res.status(400).json({ 
+                message: `Invalid privacy option. Must be one of: ${validPrivacyOptions.join(', ')}` 
+            });
+        }
 
         let media: { mediaType: string; url: string }[] = [];
 
@@ -33,6 +56,8 @@ export const createPost = async (req: Request, res: Response, next: NextFunction
                 }
             }
 
+            // map(async) returns an array of promises, and Promise.all allows for concurrent uploads
+
             media = await Promise.all(
                 files.map(async (file) => {
                     const result = await uploadToCloudinary(file, "posts");
@@ -47,7 +72,7 @@ export const createPost = async (req: Request, res: Response, next: NextFunction
             userId: new Types.ObjectId(userId),
             fullName: user?.fullName,
             userAvatar: user?.profilePic || "",
-            textContent,
+            textContent: textContent ? sanitizeString(textContent) : undefined,
             media,
             privacy: privacy || "friends",
             tags: tags ? tags.map((id: string) => new Types.ObjectId(id)) : [],
@@ -75,19 +100,26 @@ export const getSinglePost = async (req: Request, res: Response, next: NextFunct
             return res.status(404).json({ message: "Post not found" })
         }
 
+        // Check if user owns the post or post is public
         if (post.userId.equals(userId) || post?.privacy === "public") {
             return res.status(200).json({ message: "Post Fetched Successfully", post })
         }
 
+        // Check if post is private (onlyme) - only owner can see
+        if (post?.privacy === "onlyme") {
+            return res.status(403).json({ message: "This post is private" })
+        }
+
         const users = [userId, post?.userId.toString()].sort()
 
+        // Check if post is for friends only
         if (post?.privacy === "friends") {
             const areFriends = await Friendship.findOne({
                 userIds: { $all: users },
                 status: "accepted"
             })
             if (!areFriends) {
-                return res.status(404).json({ message: "Post visibility is only for friends" })
+                return res.status(403).json({ message: "Post visibility is only for friends" })
             }
         }
         return res.status(200).json({ message: "Post fetched successfully", post })
@@ -100,10 +132,23 @@ export const getSinglePost = async (req: Request, res: Response, next: NextFunct
 export const getPosts = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const userId = req.user?.id;
-        const posts = await Post.find({
-            userId
-        })
-        return res.status(200).json({ message: "Post fetched successfully", posts })
+        const { page = 1, limit = 20 } = req.query;
+
+        const skip = (Number(page) - 1) * Number(limit);
+        const posts = await Post.find({ userId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(Number(limit));
+
+        const total = await Post.countDocuments({ userId });
+
+        return res.status(200).json({ 
+            message: "Posts fetched successfully", 
+            posts,
+            total,
+            page: Number(page),
+            totalPages: Math.ceil(total / Number(limit))
+        });
     } catch (error) {
         next(error)
     }
@@ -123,6 +168,19 @@ export const editPost = async (req: Request, res: Response, next: NextFunction) 
 
         const { textContent, privacy, tags } = JSON.parse(req.body.data);
         const files = req.files as Express.Multer.File[] | undefined;
+
+        // Validate text content length
+        if (textContent && textContent.length > 5000) {
+            return res.status(400).json({ message: "Post text content cannot exceed 5000 characters" });
+        }
+
+        // Validate privacy value
+        const validPrivacyOptions = ['public', 'friends', 'onlyme'];
+        if (privacy && !validPrivacyOptions.includes(privacy)) {
+            return res.status(400).json({ 
+                message: `Invalid privacy option. Must be one of: ${validPrivacyOptions.join(', ')}` 
+            });
+        }
 
         let media: { mediaType: string; url: string }[] = [];
 
@@ -152,7 +210,7 @@ export const editPost = async (req: Request, res: Response, next: NextFunction) 
         const updatedPost = await Post.findByIdAndUpdate(
             postId,
             {
-                textContent,
+                textContent: textContent ? sanitizeString(textContent) : undefined,
                 privacy,
                 tags,
                 media: media.length > 0 ? media : undefined
@@ -179,10 +237,11 @@ export const deletePost = async (req: Request, res: Response, next: NextFunction
         if (!post) {
             return res.status(404).json({ message: "Post Not Found" })
         }
-        if (post.userId !== userId) {
+        if (!post.userId.equals(userId)) {
             return res.status(403).json({ message: "Not allowed to delete others post" })
         }
-        await post.deleteOne()
+        await post.deleteOne();
+        return res.status(200).json({ message: "Post deleted successfully" })
     } catch (error) {
         next(error)
     }
@@ -190,8 +249,28 @@ export const deletePost = async (req: Request, res: Response, next: NextFunction
 
 export const getAllPosts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const posts = await Post.find({})
-        return res.status(200).json({ message: "Posts Fetched Successfully", posts })
+        const { page = 1, limit = 20, postType } = req.query;
+
+        const query: any = {};
+        if (postType && (postType === "post" || postType === "story")) {
+            query.postType = postType;
+        }
+
+        const skip = (Number(page) - 1) * Number(limit);
+        const posts = await Post.find(query)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(Number(limit));
+
+        const total = await Post.countDocuments(query);
+
+        return res.status(200).json({ 
+            message: "Posts Fetched Successfully", 
+            posts,
+            total,
+            page: Number(page),
+            totalPages: Math.ceil(total / Number(limit))
+        });
     } catch (error) {
         next(error)
     }

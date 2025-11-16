@@ -37,13 +37,17 @@ export interface IPost extends Document {
 const recentCommentSchema = new Schema<IRecentComment>({
     userId: {
         type: Schema.Types.ObjectId,
-        requried: true
+        required: true
     },
     commentId: {
         type: Schema.Types.ObjectId,
-        requried: true
+        required: true
     },
     comment: {
+        type: String,
+        required: true
+    },
+    fullName: {
         type: String,
         required: true
     }

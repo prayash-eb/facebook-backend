@@ -34,7 +34,6 @@ export const requireAuthentication = async (req: Request, res: Response, next: N
         req.user = decoded;
         next();
     } catch (error: any) {
-        console.error("Authentication Error", error)
         return res.status(500).json({ message: "Authentication error", error: error.message });
     }
 };
