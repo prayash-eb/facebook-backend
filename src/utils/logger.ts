@@ -1,6 +1,10 @@
+import { config } from 'dotenv';
+config(); // Load environment variables first
+
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from "node:fs"
 
 // Define log levels
 const levels = {
@@ -45,6 +49,9 @@ const consoleFormat = winston.format.combine(
 
 // Create logs directory if it doesn't exist
 const logsDir = path.join(process.cwd(), 'logs');
+if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+}
 
 // Define transports
 const transports: winston.transport[] = [
