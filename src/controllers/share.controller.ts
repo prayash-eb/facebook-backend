@@ -1,9 +1,9 @@
 import type { Request, Response, NextFunction } from "express";
 import { Post } from "../models/post.model.js";
 import { User } from "../models/user.model.js";
-import { Types } from "mongoose";
 import { Share } from "../models/share.model.js";
 import { isValidObjectId } from "../utils/validation.js";
+import { ceil, max } from "../utils/convert.js";
 
 export const sharePost = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -22,12 +22,6 @@ export const sharePost = async (req: Request, res: Response, next: NextFunction)
         const user = await User.findById(userId);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
-        }
-
-        // Check if user already shared this post
-        const existingShare = await Share.findOne({ userId, postId });
-        if (existingShare) {
-            return res.status(400).json({ message: "You have already shared this post" });
         }
 
         // Create share record
@@ -53,12 +47,13 @@ export const unsharePost = async (req: Request, res: Response, next: NextFunctio
     try {
         const userId = req.user?.id;
         const { postId } = req.params;
+        const { shareId } = req.body;
 
         if (!postId || !isValidObjectId(postId)) {
             return res.status(400).json({ message: "Invalid post ID" });
         }
 
-        const share = await Share.findOne({ userId, postId });
+        const share = await Share.findOne({ _id: shareId, userId, postId });
         if (!share) {
             return res.status(404).json({ message: "Share not found" });
         }
@@ -68,7 +63,7 @@ export const unsharePost = async (req: Request, res: Response, next: NextFunctio
         // Update post share count
         const post = await Post.findById(postId);
         if (post) {
-            post.shareCount = Math.max(0, post.shareCount - 1);
+            post.shareCount = max(0, post.shareCount - 1);
             await post.save();
         }
 
@@ -102,7 +97,7 @@ export const getUserShares = async (req: Request, res: Response, next: NextFunct
             shares,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
@@ -133,25 +128,10 @@ export const getPostShares = async (req: Request, res: Response, next: NextFunct
             shares,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
     }
 };
 
-export const checkUserShared = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const userId = req.user?.id;
-        const { postId } = req.params;
-
-        const share = await Share.findOne({ userId, postId });
-
-        return res.status(200).json({
-            message: "Share status checked",
-            hasShared: !!share
-        });
-    } catch (error) {
-        next(error);
-    }
-};

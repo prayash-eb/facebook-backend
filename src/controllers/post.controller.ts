@@ -7,6 +7,7 @@ import { Types } from "mongoose";
 import { Friendship } from "../models/friendship.model.js";
 import { sanitizeString } from "../utils/validation.js";
 import { logControllerAction, logError, logValidationError } from "../utils/logger.js";
+import { ceil } from "../utils/convert.js";
 
 export const createPost = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -147,7 +148,7 @@ export const getPosts = async (req: Request, res: Response, next: NextFunction) 
             posts,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error)
@@ -269,7 +270,7 @@ export const getAllPosts = async (req: Request, res: Response, next: NextFunctio
             posts,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error)

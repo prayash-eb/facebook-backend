@@ -11,7 +11,6 @@ import { requireAuthentication } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
-// Create a notification (usually called by system/other controllers)
 router.post("/", createNotification);
 
 // Get user's notifications

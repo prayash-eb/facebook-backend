@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { Notification } from "../models/notification.model.js";
 import { User } from "../models/user.model.js";
 import { isValidObjectId, sanitizeString } from "../utils/validation.js";
+import { ceil } from "../utils/convert.js";
 
 export const createNotification = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -66,7 +67,7 @@ export const getUserNotifications = async (req: Request, res: Response, next: Ne
             notifications,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
@@ -91,8 +92,9 @@ export const markNotificationAsRead = async (req: Request, res: Response, next: 
             return res.status(403).json({ message: "Not authorized to access this notification" });
         }
 
-        // You can add an 'isRead' field to the model if needed
-        // For now, we'll just return success
+        notification.isRead = true
+        await notification.save()
+
         return res.status(200).json({
             message: "Notification marked as read",
             notification
@@ -148,10 +150,7 @@ export const deleteAllNotifications = async (req: Request, res: Response, next: 
 export const getUnreadNotificationsCount = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const userId = req.user?.id;
-
-        // This assumes you'll add an 'isRead' field to the notification model
-        // For now, return total count
-        const count = await Notification.countDocuments({ userId });
+        const count = await Notification.countDocuments({ userId, isRead: false });
 
         return res.status(200).json({
             message: "Unread notifications count fetched successfully",

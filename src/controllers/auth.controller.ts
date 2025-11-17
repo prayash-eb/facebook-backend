@@ -132,3 +132,13 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
         next(error)
     }
 }
+
+export const getAllUsers = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const users = await User.find()
+        return res.status(200).json({ message: "Users fetched successfully", users })
+    } catch (error) {
+        logError('Users fetching failed', error, { userId: req.user?.id?.toString() });
+        next(error)
+    }
+}

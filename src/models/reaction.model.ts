@@ -14,11 +14,13 @@ interface IReaction extends Document {
 const reactionSchema = new Schema<IReaction>({
     userId: {
         type: Schema.Types.ObjectId,
-        required: true
+        required: true,
+        ref:"user"
     },
     postId: {
         type: Schema.Types.ObjectId,
-        required: true
+        required: true,
+        ref:"post"
     },
     reactionType: {
         type: String,

@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { outlierThresholdService } from "../services/outlier-threshold.service.js";
 import { sanitizeString } from "../utils/validation.js";
 import { logControllerAction, logError, logValidationError } from "../utils/logger.js";
+import { ceil, floor, max } from "../utils/convert.js";
 
 export const createComment = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -55,7 +56,7 @@ export const createComment = async (req: Request, res: Response, next: NextFunct
         if (post.commentsCount >= commentThreshold) {
             // Store in outlier bucket
             const bucketSize = 100; // Define bucket size
-            const bucketIndex = Math.floor(post.commentsCount / bucketSize);
+            const bucketIndex = floor(post.commentsCount / bucketSize);
             const bucketId = `${postId}_${bucketIndex}`;
 
             let outlierBucket = await OutlierComment.findOne({
@@ -96,17 +97,19 @@ export const createComment = async (req: Request, res: Response, next: NextFunct
 
             // Update post comment count and recent comments
             post.commentsCount += 1;
-            
+            post.isViral = true
+
             // Update recent comments (keep last 3)
             const newRecentComment = {
                 commentId: new Types.ObjectId(),
                 userId: new Types.ObjectId(userId),
                 fullName: user.fullName,
                 comment: sanitizedComment,
+                mediaUrl,
                 createdAt: new Date(),
                 updatedAt: new Date()
             };
-            
+
             post.recentComments.unshift(newRecentComment as any);
             if (post.recentComments.length > 3) {
                 post.recentComments = post.recentComments.slice(0, 3);
@@ -135,7 +138,7 @@ export const createComment = async (req: Request, res: Response, next: NextFunct
 
             // Update post comment count and recent comments
             post.commentsCount += 1;
-            
+
             const newRecentComment = {
                 commentId: newComment._id,
                 userId: new Types.ObjectId(userId),
@@ -144,7 +147,7 @@ export const createComment = async (req: Request, res: Response, next: NextFunct
                 createdAt: newComment.createdAt,
                 updatedAt: newComment.updatedAt
             };
-            
+
             post.recentComments.unshift(newRecentComment as any);
             if (post.recentComments.length > 3) {
                 post.recentComments = post.recentComments.slice(0, 3);
@@ -162,87 +165,116 @@ export const createComment = async (req: Request, res: Response, next: NextFunct
         next(error);
     }
 };
-
 export const getComments = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { postId } = req.params;
         const { page = 1, limit = 20 } = req.query;
 
         const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
-        }
+        if (!post) return res.status(404).json({ message: "Post not found" });
 
-        const commentThreshold = await outlierThresholdService.getCommentThreshold();
+        // Parse pagination params
+        const pageNum = Number(page);
+        const limitNum = Number(limit);
+        const skip = (pageNum - 1) * limitNum;
 
-        if (post.commentsCount >= commentThreshold) {
-            // Fetch from outlier buckets
-            const outlierBuckets = await OutlierComment.find({ postId })
-                .sort({ createdAt: -1 });
+        const normalCommentsPromise = Comment.find({ postId, parentCommentId: null })
+            .populate("userId", "fullName profilePic")
+            .sort({ createdAt: -1 })
+            .lean();
 
-            // Flatten all comments from all buckets
-            const allComments = outlierBuckets.flatMap(bucket =>
-                bucket.comments.filter(c => !c.isDeleted)
+        const normalCountPromise = Comment.countDocuments({ postId, parentCommentId: null });
+
+
+        const outlierBuckets = await OutlierComment.find({ postId }).lean();
+
+        const outlierComments = outlierBuckets
+            .flatMap(bucket =>
+                bucket.comments.filter(c => !c.isDeleted && !c.parentCommentId)
             );
 
-            // Manual pagination on flattened array
-            const skip = (Number(page) - 1) * Number(limit);
-            const paginatedComments = allComments.slice(skip, skip + Number(limit));
+        // Populate user info manually for outlier comments
+        const outlierUserIds = [...new Set(outlierComments.map(c => c.userId.toString()))];
+        const users = await User.find({ _id: { $in: outlierUserIds } }).select("fullName profilePic").lean();
+        const userMap = new Map(users.map(u => [u._id.toString(), u]));
 
-            return res.status(200).json({
-                message: "Comments fetched successfully",
-                comments: paginatedComments,
-                total: allComments.length,
-                page: Number(page),
-                totalPages: Math.ceil(allComments.length / Number(limit)),
-                isOutlier: true
-            });
-        } else {
-            // Fetch from regular Comment collection
-            const skip = (Number(page) - 1) * Number(limit);
-            const comments = await Comment.find({ postId, parentCommentId: null })
-                .populate("userId", "fullName profilePic")
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(Number(limit));
+        const outlierCommentsWithUser = outlierComments.map(c => ({
+            _id: c._id,
+            userId: c.userId,
+            fullName: userMap.get(c.userId.toString())?.fullName || c.fullName,
+            profilePic: userMap.get(c.userId.toString())?.profilePic || null,
+            comment: c.textContent,
+            media: c.media,
+            createdAt: c.createdAt,
+            updatedAt: c.updatedAt
+        }));
 
-            const total = await Comment.countDocuments({ postId, parentCommentId: null });
 
-            return res.status(200).json({
-                message: "Comments fetched successfully",
-                comments,
-                total,
-                page: Number(page),
-                totalPages: Math.ceil(total / Number(limit)),
-                isOutlier: false
-            });
-        }
+        const normalComments = await normalCommentsPromise;
+        const totalNormal = await normalCountPromise;
+
+        const allComments = [...normalComments, ...outlierCommentsWithUser]
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        const paginatedComments = allComments.slice(skip, skip + limitNum);
+
+        return res.status(200).json({
+            message: "Comments fetched successfully",
+            comments: paginatedComments,
+            total: allComments.length,
+            page: pageNum,
+            totalPages: ceil(allComments.length / limitNum)
+        });
+
     } catch (error) {
         next(error);
     }
 };
 
+
 export const getReplies = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { commentId } = req.params;
         const { page = 1, limit = 10 } = req.query;
-
         const skip = (Number(page) - 1) * Number(limit);
-        const replies = await Comment.find({ parentCommentId: commentId })
+
+        // Normal replies
+        const normalRepliesPromise = Comment.find({ parentCommentId: commentId })
             .populate("userId", "fullName profilePic")
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(Number(limit));
 
-        const total = await Comment.countDocuments({ parentCommentId: commentId });
+        const normalCountPromise = Comment.countDocuments({ parentCommentId: commentId });
+
+        // Outlier replies
+        const outlierBuckets = await OutlierComment.find({
+            "comments.parentCommentId": commentId
+        }).lean();
+
+        const allOutlierReplies = outlierBuckets
+            .flatMap(bucket =>
+                bucket.comments.filter(c =>
+                    c.parentCommentId?.toString() === commentId && !c.isDeleted
+                )
+            )
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+        const [normalReplies, normalCount] = await Promise.all([normalRepliesPromise, normalCountPromise]);
+
+        // Merge replies (normal first, then outliers if needed)
+        const mergedReplies = [...normalReplies, ...allOutlierReplies].slice(0, Number(limit));
+
+        const totalReplies = normalCount + allOutlierReplies.length;
 
         return res.status(200).json({
             message: "Replies fetched successfully",
-            replies,
-            total,
+            replies: mergedReplies,
+            total: totalReplies,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(totalReplies / Number(limit))
         });
+
     } catch (error) {
         next(error);
     }
@@ -254,7 +286,6 @@ export const updateComment = async (req: Request, res: Response, next: NextFunct
         const { commentId } = req.params;
         const { comment } = req.body;
 
-        // Validate input
         if (!comment || comment.trim().length === 0) {
             return res.status(400).json({ message: "Comment text is required" });
         }
@@ -263,70 +294,174 @@ export const updateComment = async (req: Request, res: Response, next: NextFunct
             return res.status(400).json({ message: "Comment cannot exceed 2000 characters" });
         }
 
-        const existingComment = await Comment.findById(commentId);
-        if (!existingComment) {
+        const sanitizedComment = sanitizeString(comment, 2000);
+
+        let existingComment = await Comment.findById(commentId);
+
+        if (existingComment) {
+            if (!existingComment.userId.equals(userId)) {
+                return res.status(403).json({ message: "Not authorized to update this comment" });
+            }
+
+            existingComment.comment = sanitizedComment;
+            await existingComment.save();
+
+            const post = await Post.findById(existingComment.postId);
+            if (post) {
+                // Update recentComments
+                post.recentComments = post.recentComments.map(rc =>
+                    rc.commentId.equals(existingComment._id as Types.ObjectId)
+                        ? { ...rc, comment: sanitizedComment, updatedAt: new Date() }
+                        : rc
+                );
+                await post.save();
+            }
+
+            return res.status(200).json({
+                message: "Comment updated successfully",
+                comment: existingComment,
+                isOutlier: false
+            });
+        }
+
+        const bucket = await OutlierComment.findOne({
+            "comments._id": commentId
+        });
+
+        if (!bucket) {
             return res.status(404).json({ message: "Comment not found" });
         }
 
-        if (!existingComment.userId.equals(userId)) {
+        const index = bucket.comments.findIndex(c => (c._id as Types.ObjectId).equals(commentId));
+        const target = bucket.comments[index];
+
+        if (!target?.userId.equals(userId)) {
             return res.status(403).json({ message: "Not authorized to update this comment" });
         }
 
-        existingComment.comment = sanitizeString(comment, 2000);
-        await existingComment.save();
+        bucket.comments[index]!.textContent = sanitizedComment;
+        bucket.comments[index]!.updatedAt = new Date();
+        await bucket.save();
+
+        /** Update in recentComments if present */
+        const post = await Post.findById(bucket.postId);
+        if (post) {
+            post.recentComments = post.recentComments.map(rc =>
+                rc.commentId.equals(target._id as Types.ObjectId)
+                    ? { ...rc, comment: sanitizedComment, updatedAt: new Date() }
+                    : rc
+            );
+            await post.save();
+        }
 
         return res.status(200).json({
-            message: "Comment updated successfully",
-            comment: existingComment
+            message: "Comment updated successfully (outlier)",
+            comment: bucket.comments[index],
+            isOutlier: true
         });
+
     } catch (error) {
         next(error);
     }
 };
+
+
+
+async function refillRecentComments(post: any) {
+    const needed = 3 - post.recentComments.length;
+    if (needed <= 0) return;
+
+    const normal = await Comment.find({ postId: post._id })
+        .sort({ createdAt: -1 })
+        .limit(needed)
+        .lean();
+
+    let outliers: any[] = [];
+
+    if (normal.length < needed) {
+        const buckets = await OutlierComment.find({ postId: post._id }).lean();
+        outliers = buckets
+            .flatMap(b => b.comments.filter(c => !c.isDeleted))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .slice(0, needed - normal.length);
+    }
+
+    const merged = [...normal, ...outliers].map(c => ({
+        commentId: c._id,
+        userId: c.userId,
+        fullName: c.fullName,
+        comment: c.comment || c.textContent,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt
+    }));
+
+    post.recentComments.push(...merged);
+}
+
 
 export const deleteComment = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const userId = req.user?.id;
         const { commentId } = req.params;
 
-        const comment = await Comment.findById(commentId);
-        if (!comment) {
-            return res.status(404).json({ message: "Comment not found" });
+        let comment = await Comment.findById(commentId);
+
+        if (comment) {
+            const post = await Post.findById(comment.postId);
+            if (!post) return res.status(404).json({ message: "Post not found" });
+
+            if (!comment.userId.equals(userId) && !post.userId.equals(userId)) {
+                return res.status(403).json({ message: "Not authorized" });
+            }
+
+            const repliesCount = await Comment.countDocuments({ parentCommentId: commentId });
+            await Comment.deleteMany({ parentCommentId: commentId });
+            await comment.deleteOne();
+
+            post.commentsCount = max(0, post.commentsCount - (1 + repliesCount));
+            post.recentComments = post.recentComments.filter(rc => !rc.commentId.equals(commentId));
+
+            await refillRecentComments(post);
+            await post.save();
+
+            return res.status(200).json({
+                message: "Comment deleted successfully",
+                isOutlier: false
+            });
         }
 
-        const post = await Post.findById(comment.postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
+
+        const bucket = await OutlierComment.findOne({ "comments._id": commentId });
+        if (!bucket) return res.status(404).json({ message: "Comment not found" });
+
+        const index = bucket.comments.findIndex(c => (c._id as Types.ObjectId).equals(commentId));
+        const target = bucket.comments[index];
+
+        const post = await Post.findById(bucket.postId);
+        if (!post) return res.status(404).json({ message: "Post not found" });
+
+        if (!target?.userId.equals(userId) && !post.userId.equals(userId)) {
+            return res.status(403).json({ message: "Not authorized" });
         }
 
-        // Check if user owns the comment or the post
-        if (!comment.userId.equals(userId) && !post.userId.equals(userId)) {
-            return res.status(403).json({ message: "Not authorized to delete this comment" });
-        }
+        // Soft delete in outlier bucket
+        bucket.comments[index]!.isDeleted = true;
+        bucket.count = max(0, bucket.count - 1);
+        await bucket.save();
 
-        // Count replies to subtract from post count
-        const repliesCount = await Comment.countDocuments({ parentCommentId: commentId });
+        post.commentsCount = max(0, post.commentsCount - 1);
+        post.recentComments = post.recentComments.filter(rc => !rc.commentId.equals(commentId));
 
-        // Delete all replies first
-        await Comment.deleteMany({ parentCommentId: commentId });
-
-        // Delete the comment
-        await comment.deleteOne();
-
-        // Update post comment count (subtract comment + all its replies)
-        post.commentsCount = Math.max(0, post.commentsCount - (1 + repliesCount));
-        
-        // Remove from recent comments if present
-        post.recentComments = post.recentComments.filter(
-            rc => !rc.commentId.equals(commentId)
-        );
-        
+        await refillRecentComments(post);
         await post.save();
 
         return res.status(200).json({
-            message: "Comment deleted successfully"
+            message: "Comment deleted successfully (outlier)",
+            isOutlier: true
         });
+
     } catch (error) {
         next(error);
     }
 };
+

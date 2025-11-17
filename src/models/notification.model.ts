@@ -6,6 +6,7 @@ interface INotification extends Document {
     userId: Types.ObjectId;
     notificationType: NotificationType;
     notificationMessage: String;
+    isRead: boolean;
     updatedAt: Date;
 }
 
@@ -17,6 +18,10 @@ const notificationSchema = new Schema<INotification>({
     notificationType: {
         type: String,
         enum: ["system", "reaction", "post", "tags", "friend_requests"]
+    },
+    isRead: {
+        type: Boolean,
+        default: false
     },
     notificationMessage: {
         type: String

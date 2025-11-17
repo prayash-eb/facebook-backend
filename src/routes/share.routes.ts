@@ -4,7 +4,6 @@ import {
     unsharePost,
     getUserShares,
     getPostShares,
-    checkUserShared
 } from "../controllers/share.controller.js";
 import { requireAuthentication } from "../middleware/auth.middleware.js";
 
@@ -17,12 +16,10 @@ router.post("/:postId", requireAuthentication, sharePost);
 router.delete("/:postId", requireAuthentication, unsharePost);
 
 // Get user's shares
-router.get("/user/shares", requireAuthentication, getUserShares);
+router.get("/", requireAuthentication, getUserShares);
 
 // Get all shares for a post
 router.get("/:postId/shares", getPostShares);
 
-// Check if user shared a post
-router.get("/:postId/check", requireAuthentication, checkUserShared);
 
 export default router;

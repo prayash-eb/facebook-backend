@@ -12,6 +12,7 @@ interface IRecentComment {
     userId: Types.ObjectId;
     fullName: string;
     comment: string;
+    media: string;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -45,7 +46,9 @@ const recentCommentSchema = new Schema<IRecentComment>({
     },
     comment: {
         type: String,
-        required: true
+    },
+    media: {
+        type: String
     },
     fullName: {
         type: String,

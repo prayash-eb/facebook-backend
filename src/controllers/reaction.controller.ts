@@ -4,6 +4,9 @@ import { Post } from "../models/post.model.js";
 import { OutlierReaction } from "../models/outlier_reaction.model.js";
 import { Types } from "mongoose";
 import { outlierThresholdService } from "../services/outlier-threshold.service.js";
+import { User } from "../models/user.model.js";
+import { Friendship } from "../models/friendship.model.js";
+import { ceil, floor, max } from "../utils/convert.js";
 
 export const createOrUpdateReaction = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -11,38 +14,89 @@ export const createOrUpdateReaction = async (req: Request, res: Response, next: 
         const { postId } = req.params;
         const { reactionType } = req.body as { reactionType: ReactionType };
 
-        // Validate reaction type
+        // --- validate user and reactionType
+        if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
         const validReactions: ReactionType[] = ['like', 'love', 'care', 'angry', 'sad'];
         if (!reactionType || !validReactions.includes(reactionType)) {
-            return res.status(400).json({ 
-                message: "Invalid reaction type. Must be one of: like, love, care, angry, sad" 
+            return res.status(400).json({
+                message: "Invalid reaction type. Must be one of: like, love, care, angry, sad"
             });
         }
 
+        // --- fetch post
         const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
+        if (!post) return res.status(404).json({ message: "Post not found" });
+
+        // --- privacy checks
+        if (post.privacy === "onlyme" && !post.userId.equals(userId)) {
+            return res.status(403).json({ message: "You cannot react to this post" });
+        }
+        if (post.privacy === "friends" && !post.userId.equals(userId)) {
+            const isFriend = await Friendship.findOne({
+                userIds: { $all: [post.userId, userId] },
+                status: "accepted"
+            });
+            if (!isFriend) {
+                return res.status(403).json({ message: "You must be friends with this user to react" });
+            }
         }
 
-        // Get the current outlier threshold using the service
+        // --- threshold
         const reactionThreshold = await outlierThresholdService.getReactionThreshold();
+        const isOutlierPost = post.reactionsCount >= reactionThreshold;
 
-        // Check if post has reached outlier status
-        if (post.reactionsCount >= reactionThreshold) {
-            // Store in outlier bucket
-            const bucketSize = 100;
-            const bucketIndex = Math.floor(post.reactionsCount / bucketSize);
-            const bucketId = `${postId}_${bucketIndex}`;
+      
+        const outlierBucket = await OutlierReaction.findOne({
+            postId: post._id,
+            'reactions.userId': new Types.ObjectId(userId),
+            'reactions.isDeleted': false
+        });
 
-            let outlierBucket = await OutlierReaction.findOne({
-                postId,
-                bucketId,
-                isFull: false
+        // If outlier bucket found, locate the user's subdocument
+        if (outlierBucket) {
+            const userReactionIndex = outlierBucket.reactions.findIndex(r => r.userId.equals(userId) && !r.isDeleted);
+            if (userReactionIndex !== -1) {
+                // Update the subdocument in-place
+                outlierBucket.reactions[userReactionIndex]!.reactionType = reactionType;
+                await outlierBucket.save();
+
+                return res.status(200).json({
+                    message: "Reaction updated successfully (outlier)",
+                    reactionType,
+                    isOutlier: true
+                });
+            }
+        }
+
+        // Not found in outlier: check normal Reaction collection
+        const normalReaction = await Reaction.findOne({ postId, userId });
+
+        if (normalReaction) {
+            // Update the normal reaction document
+            normalReaction.reactionType = reactionType;
+            await normalReaction.save();
+
+            return res.status(200).json({
+                message: "Reaction updated successfully",
+                reaction: normalReaction,
+                isOutlier: false
             });
+        }
 
-            if (!outlierBucket) {
-                outlierBucket = await OutlierReaction.create({
-                    postId,
+        if (isOutlierPost) {
+            // Prefer to find an existing non-full bucket for this post.
+            // Attempt to find a non-full bucket first (most generic approach).
+            let targetBucket = await OutlierReaction.findOne({ postId: post._id, isFull: false });
+
+            // If no non-full bucket exists, compute bucketId by bucketIndex and create new bucket.
+            if (!targetBucket) {
+                const bucketSize = 100;
+                const bucketIndex = Math.floor(post.reactionsCount / bucketSize);
+                const bucketId = `${postId}_${bucketIndex}`;
+
+                targetBucket = await OutlierReaction.create({
+                    postId: post._id,
                     bucketId,
                     reactions: [],
                     isFull: false,
@@ -50,83 +104,43 @@ export const createOrUpdateReaction = async (req: Request, res: Response, next: 
                 });
             }
 
-            // Check if user already reacted in this bucket
-            const existingReactionIndex = outlierBucket.reactions.findIndex(
-                r => r.userId.equals(userId) && !r.isDeleted
-            );
+            // push the new reaction subdocument
+            targetBucket.reactions.push({
+                userId: new Types.ObjectId(userId),
+                reactionType,
+                isDeleted: false
+            } as any);
 
-            if (existingReactionIndex !== -1) {
-                // Update existing reaction
-                const existingReaction = outlierBucket.reactions[existingReactionIndex];
-                if (existingReaction) {
-                    existingReaction.reactionType = reactionType;
-                    await outlierBucket.save();
+            targetBucket.count = (targetBucket.count || 0) + 1;
+            if (targetBucket.count >= 100) targetBucket.isFull = true;
+            await targetBucket.save();
 
-                    return res.status(200).json({
-                        message: "Reaction updated successfully",
-                        reactionType,
-                        isOutlier: true
-                    });
-                }
-            } else {
-                // Add new reaction to bucket
-                outlierBucket.reactions.push({
-                    userId: new Types.ObjectId(userId),
-                    reactionType,
-                    isDeleted: false
-                } as any);
+            // update post counters
+            post.reactionsCount += 1;
+            post.isViral = true;
+            await post.save();
 
-                outlierBucket.count += 1;
-
-                // Mark bucket as full if it reaches bucket size
-                if (outlierBucket.count >= bucketSize) {
-                    outlierBucket.isFull = true;
-                }
-
-                await outlierBucket.save();
-
-                // Update post reaction count
-                post.reactionsCount += 1;
-                await post.save();
-
-                return res.status(201).json({
-                    message: "Reaction added successfully (outlier)",
-                    reactionType,
-                    isOutlier: true
-                });
-            }
+            return res.status(201).json({
+                message: "Reaction added successfully (outlier)",
+                reactionType,
+                isOutlier: true
+            });
         } else {
-            // Store in regular Reaction collection
-            const existingReaction = await Reaction.findOne({ userId, postId });
+            // create normal reaction document
+            const newReaction = await Reaction.create({
+                postId,
+                userId,
+                reactionType
+            });
 
-            if (existingReaction) {
-                // Update existing reaction
-                existingReaction.reactionType = reactionType;
-                await existingReaction.save();
+            post.reactionsCount += 1;
+            await post.save();
 
-                return res.status(200).json({
-                    message: "Reaction updated successfully",
-                    reaction: existingReaction,
-                    isOutlier: false
-                });
-            } else {
-                // Create new reaction
-                const newReaction = await Reaction.create({
-                    userId,
-                    postId,
-                    reactionType
-                });
-
-                // Update post reaction count
-                post.reactionsCount += 1;
-                await post.save();
-
-                return res.status(201).json({
-                    message: "Reaction created successfully",
-                    reaction: newReaction,
-                    isOutlier: false
-                });
-            }
+            return res.status(201).json({
+                message: "Reaction added successfully",
+                reaction: newReaction,
+                isOutlier: false
+            });
         }
     } catch (error) {
         next(error);
@@ -139,62 +153,40 @@ export const removeReaction = async (req: Request, res: Response, next: NextFunc
         const { postId } = req.params;
 
         const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
+        if (!post) return res.status(404).json({ message: "Post not found" });
+
+        let reactionRemoved = false;
+        const reaction = await Reaction.findOne({ userId, postId });
+        if (reaction) {
+            await reaction.deleteOne();
+            reactionRemoved = true;
         }
-
-        const reactionThreshold = await outlierThresholdService.getReactionThreshold();
-
-        if (post.reactionsCount >= reactionThreshold) {
-            // Remove from outlier buckets
+        if (!reactionRemoved) {
             const outlierBuckets = await OutlierReaction.find({ postId });
-
-            let reactionRemoved = false;
             for (const bucket of outlierBuckets) {
-                const reactionIndex = bucket.reactions.findIndex(
+                const index = bucket.reactions.findIndex(
                     r => r.userId.equals(userId) && !r.isDeleted
                 );
-
-                if (reactionIndex !== -1) {
-                    const reaction = bucket.reactions[reactionIndex];
-                    if (reaction) {
-                        reaction.isDeleted = true;
-                        bucket.count = Math.max(0, bucket.count - 1);
-                        await bucket.save();
-                        reactionRemoved = true;
-                        break;
-                    }
+                if (index !== -1) {
+                    bucket.reactions[index]!.isDeleted = true;
+                    bucket.count = max(0, bucket.count - 1);
+                    await bucket.save();
+                    reactionRemoved = true;
+                    break;
                 }
             }
-
-            if (reactionRemoved) {
-                post.reactionsCount = Math.max(0, post.reactionsCount - 1);
-                await post.save();
-
-                return res.status(200).json({
-                    message: "Reaction removed successfully"
-                });
-            } else {
-                return res.status(404).json({ message: "Reaction not found" });
-            }
-        } else {
-            // Remove from regular Reaction collection
-            const reaction = await Reaction.findOne({ userId, postId });
-
-            if (!reaction) {
-                return res.status(404).json({ message: "Reaction not found" });
-            }
-
-            await reaction.deleteOne();
-
-            // Update post reaction count
-            post.reactionsCount = Math.max(0, post.reactionsCount - 1);
-            await post.save();
-
-            return res.status(200).json({
-                message: "Reaction removed successfully"
-            });
         }
+
+        if (!reactionRemoved) {
+            return res.status(404).json({ message: "Reaction not found" });
+        }
+        post.reactionsCount = max(0, post.reactionsCount - 1);
+        await post.save();
+
+        return res.status(200).json({
+            message: "Reaction removed successfully"
+        });
+
     } catch (error) {
         next(error);
     }
@@ -206,63 +198,60 @@ export const getReactions = async (req: Request, res: Response, next: NextFuncti
         const { page = 1, limit = 50, reactionType } = req.query;
 
         const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
+        if (!post) return res.status(404).json({ message: "Post not found" });
+
+        const pageNum = Number(page);
+        const limitNum = Number(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        const normalQuery: any = { postId };
+        if (reactionType) normalQuery.reactionType = reactionType;
+
+        const normalReactions = await Reaction.find(normalQuery)
+            .populate("userId", "fullName profilePic")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const outlierBuckets = await OutlierReaction.find({ postId }).lean();
+
+        let outlierReactions = outlierBuckets.flatMap(bucket =>
+            bucket.reactions.filter(r => !r.isDeleted)
+        );
+
+        if (reactionType) {
+            outlierReactions = outlierReactions.filter(r => r.reactionType === reactionType);
         }
 
-        const reactionThreshold = await outlierThresholdService.getReactionThreshold();
+        // Populate user info for outlier reactions
+        const userIds = [...new Set(outlierReactions.map(r => r.userId.toString()))];
+        const users = await User.find({ _id: { $in: userIds } }).select("fullName profilePic").lean();
+        const userMap = new Map(users.map(u => [u._id.toString(), u]));
 
-        if (post.reactionsCount >= reactionThreshold) {
-            // Fetch from outlier buckets
-            const outlierBuckets = await OutlierReaction.find({ postId });
+        const outlierReactionsWithUser = outlierReactions.map(r => ({
+            reactionId: r._id,
+            userId: r.userId,
+            fullName: userMap.get(r.userId.toString())?.fullName || "",
+            profilePic: userMap.get(r.userId.toString())?.profilePic || null,
+            reactionType: r.reactionType,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt
+        }));
 
-            let reactions = outlierBuckets.flatMap(bucket =>
-                bucket.reactions.filter(r => !r.isDeleted)
-            );
 
-            // Filter by reaction type if specified
-            if (reactionType) {
-                reactions = reactions.filter(r => r.reactionType === reactionType);
-            }
+        const allReactions = [...normalReactions, ...outlierReactionsWithUser].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
 
-            // Manual pagination
-            const skip = (Number(page) - 1) * Number(limit);
-            const paginatedReactions = reactions.slice(skip, skip + Number(limit));
+        const paginatedReactions = allReactions.slice(skip, skip + limitNum);
 
-            return res.status(200).json({
-                message: "Reactions fetched successfully",
-                reactions: paginatedReactions,
-                total: reactions.length,
-                page: Number(page),
-                totalPages: Math.ceil(reactions.length / Number(limit)),
-                isOutlier: true
-            });
-        } else {
-            // Fetch from regular Reaction collection
-            const skip = (Number(page) - 1) * Number(limit);
-            const query: any = { postId };
-            
-            if (reactionType) {
-                query.reactionType = reactionType;
-            }
+        return res.status(200).json({
+            message: "Reactions fetched successfully",
+            reactions: paginatedReactions,
+            total: allReactions.length,
+            page: pageNum,
+            totalPages: ceil(allReactions.length / limitNum)
+        });
 
-            const reactions = await Reaction.find(query)
-                .populate("userId", "fullName profilePic")
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(Number(limit));
-
-            const total = await Reaction.countDocuments(query);
-
-            return res.status(200).json({
-                message: "Reactions fetched successfully",
-                reactions,
-                total,
-                page: Number(page),
-                totalPages: Math.ceil(total / Number(limit)),
-                isOutlier: false
-            });
-        }
     } catch (error) {
         next(error);
     }
@@ -273,13 +262,9 @@ export const getReactionsSummary = async (req: Request, res: Response, next: Nex
         const { postId } = req.params;
 
         const post = await Post.findById(postId);
-        if (!post) {
-            return res.status(404).json({ message: "Post not found" });
-        }
+        if (!post) return res.status(404).json({ message: "Post not found" });
 
-        const reactionThreshold = await outlierThresholdService.getReactionThreshold();
-
-        let summary: Record<ReactionType, number> = {
+        const summary: Record<ReactionType, number> = {
             like: 0,
             love: 0,
             care: 0,
@@ -287,34 +272,31 @@ export const getReactionsSummary = async (req: Request, res: Response, next: Nex
             sad: 0
         };
 
-        if (post.reactionsCount >= reactionThreshold) {
-            // Count from outlier buckets
-            const outlierBuckets = await OutlierReaction.find({ postId });
+        const normalReactions = await Reaction.aggregate([
+            { $match: { postId: new Types.ObjectId(postId) } },
+            { $group: { _id: "$reactionType", count: { $sum: 1 } } }
+        ]);
 
-            outlierBuckets.forEach(bucket => {
-                bucket.reactions.forEach(r => {
-                    if (!r.isDeleted) {
-                        summary[r.reactionType] = (summary[r.reactionType] || 0) + 1;
-                    }
-                });
-            });
-        } else {
-            // Count from regular Reaction collection
-            const reactions = await Reaction.aggregate([
-                { $match: { postId: new Types.ObjectId(postId) } },
-                { $group: { _id: "$reactionType", count: { $sum: 1 } } }
-            ]);
+        normalReactions.forEach(r => {
+            summary[r._id as ReactionType] = (summary[r._id as ReactionType] || 0) + r.count;
+        });
 
-            reactions.forEach(r => {
-                summary[r._id as ReactionType] = r.count;
+
+        const outlierBuckets = await OutlierReaction.find({ postId }).lean();
+        outlierBuckets.forEach(bucket => {
+            bucket.reactions.forEach(r => {
+                if (!r.isDeleted) {
+                    summary[r.reactionType] = (summary[r.reactionType] || 0) + 1;
+                }
             });
-        }
+        });
 
         return res.status(200).json({
             message: "Reactions summary fetched successfully",
             summary,
             total: post.reactionsCount
         });
+
     } catch (error) {
         next(error);
     }

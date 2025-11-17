@@ -29,7 +29,7 @@ app.use("/api/v1/reaction", reactionRouter)
 app.use("/api/v1/share", shareRouter)
 app.use("/api/v1/notification", notificationRouter)
 app.use("/api/v1/follow", followRouter)
-app.use("/api/v1/friendship", friendshipRouter)
+app.use("/api/v1/friend", friendshipRouter)
 
 
 app.get("/", (req: Request, res: Response) => {

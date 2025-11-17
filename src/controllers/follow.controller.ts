@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { Follow } from "../models/follow.model.js";
 import { User } from "../models/user.model.js";
 import { isValidObjectId } from "../utils/validation.js";
+import { ceil } from "../utils/convert.js";
 
 export const followUser = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -98,7 +99,7 @@ export const getFollowers = async (req: Request, res: Response, next: NextFuncti
             followers: followers.map(f => f.followerId),
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
@@ -129,7 +130,7 @@ export const getFollowing = async (req: Request, res: Response, next: NextFuncti
             following: following.map(f => f.targetId),
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);

@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { Friendship } from "../models/friendship.model.js";
 import { User } from "../models/user.model.js";
 import { isValidObjectId } from "../utils/validation.js";
+import { ceil } from "../utils/convert.js";
 
 export const createFriendRequest = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -67,6 +68,16 @@ export const acceptFriendRequest = async (req: Request, res: Response, next: Nex
         }
 
         friendRequest.status = "accepted";
+
+        await User.updateMany(
+            { _id: { $in: userIds } },
+            {
+                $inc: {
+                    followersCount: 1,
+                    followingsCount: 1
+                }
+            }
+        );
         await friendRequest.save();
 
         return res.status(200).json({ message: "Friend Request Accepted", userId, targetId })
@@ -97,12 +108,12 @@ export const getFriendRequests = async (req: Request, res: Response, next: NextF
             status: "pending"
         });
 
-        return res.status(200).json({ 
+        return res.status(200).json({
             message: "Friend requests fetched successfully",
             friendRequests,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
@@ -133,12 +144,12 @@ export const getFriends = async (req: Request, res: Response, next: NextFunction
             status: "accepted"
         });
 
-        return res.status(200).json({ 
+        return res.status(200).json({
             message: "Friends fetched successfully",
             friends,
             total,
             page: Number(page),
-            totalPages: Math.ceil(total / Number(limit))
+            totalPages: ceil(total / Number(limit))
         });
     } catch (error) {
         next(error);
@@ -178,6 +189,15 @@ export const unfriend = async (req: Request, res: Response, next: NextFunction) 
             return res.status(404).json({ message: "Friendship not found" })
         }
 
+        await User.updateMany(
+            { _id: { $in: userIds } },
+            {
+                $inc: {
+                    followersCount: -1,
+                    followingsCount: -1
+                }
+            }
+        );
         await friendship.deleteOne()
         return res.status(200).json({ message: "Unfriended successfully" })
     } catch (error) {

@@ -12,11 +12,12 @@ import {
 
 const friendshipRouter = Router()
 
-friendshipRouter.patch("/accept-friend", requireAuthentication, acceptFriendRequest);
+friendshipRouter.patch("/accept-request", requireAuthentication, acceptFriendRequest);
 friendshipRouter.post("/send-friend-request", requireAuthentication, createFriendRequest);
 friendshipRouter.get("/", requireAuthentication, getFriends)
 friendshipRouter.get("/requests", requireAuthentication, getFriendRequests)
-friendshipRouter.delete("/friend-request", requireAuthentication, deleteFriendRequests)
-friendshipRouter.delete("/unfriend", requireAuthentication, unfriend)
+friendshipRouter.delete("/unfriend/", requireAuthentication, unfriend)
+friendshipRouter.delete("/request", requireAuthentication, deleteFriendRequests)
+
 
 export default friendshipRouter

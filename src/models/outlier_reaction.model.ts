@@ -1,10 +1,12 @@
 import { Schema, Document, Types, model } from "mongoose";
 import { ReactionEnum, type ReactionType } from "./reaction.model.js";
 
-interface IBucketReaction {
+interface IBucketReaction extends Document {
     userId: Types.ObjectId;
     reactionType: ReactionType;
     isDeleted: boolean;
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 interface IOutlierReaction extends Document {
@@ -20,7 +22,8 @@ interface IOutlierReaction extends Document {
 const bucketReactionSchema = new Schema<IBucketReaction>({
     userId: {
         type: Schema.Types.ObjectId,
-        required: true
+        required: true,
+        ref:"user"
     },
     reactionType: {
         type: String,
@@ -37,7 +40,8 @@ const bucketReactionSchema = new Schema<IBucketReaction>({
 const outlierReactionSchema = new Schema<IOutlierReaction>({
     postId: {
         type: Schema.Types.ObjectId,
-        required: true
+        required: true,
+        ref:"post"
     },
     bucketId: {
         type: String,

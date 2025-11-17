@@ -1,9 +1,10 @@
 import { Schema, Document, Types, model } from "mongoose";
 
-interface IBucketComment {
+interface IBucketComment extends Document{
     userId: Types.ObjectId;
     fullName: string;
     textContent: string;
+    parentCommentId: Types.ObjectId;
     media: string;
     isDeleted: boolean;
     createdAt: Date;
@@ -31,6 +32,9 @@ const bucketCommentSchema = new Schema<IBucketComment>({
     },
     textContent: {
         type: String,
+    },
+    parentCommentId: {
+        type: Schema.Types.ObjectId
     },
     media: {
         type: String,
