@@ -152,24 +152,3 @@ export const checkFollowStatus = async (req: Request, res: Response, next: NextF
         next(error);
     }
 };
-
-export const getFollowStats = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const { userId } = req.params;
-
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        return res.status(200).json({
-            message: "Follow stats fetched successfully",
-            stats: {
-                followersCount: user.followersCount,
-                followingsCount: user.followingsCount
-            }
-        });
-    } catch (error) {
-        next(error);
-    }
-};

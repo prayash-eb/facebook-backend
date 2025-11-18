@@ -47,11 +47,9 @@ const consoleFormat = winston.format.combine(
     )
 );
 
-// Create logs directory if it doesn't exist
-const logsDir = path.join(process.cwd(), 'logs');
-if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-}
+const logsDir = path.join(process.cwd(), "logs");
+fs.mkdirSync(logsDir, { recursive: true });
+
 
 // Define transports
 const transports: winston.transport[] = [
@@ -64,6 +62,8 @@ const transports: winston.transport[] = [
 
 // Add file transports in production or if explicitly enabled
 if (!isDevelopment || process.env.ENABLE_FILE_LOGGING === 'true') {
+
+
     // Error logs - daily rotation
     transports.push(
         new DailyRotateFile({

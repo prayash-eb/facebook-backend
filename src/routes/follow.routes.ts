@@ -4,9 +4,9 @@ import {
     unfollowUser,
     getFollowers,
     getFollowing,
-    checkFollowStatus,
-    getFollowStats
+    checkFollowStatus
 } from "../controllers/follow.controller.js";
+
 import { requireAuthentication } from "../middleware/auth.middleware.js";
 
 const router = Router();
@@ -25,8 +25,5 @@ router.get("/:userId/following", getFollowing);
 
 // Check if current user is following a target user
 router.get("/:targetId/status", requireAuthentication, checkFollowStatus);
-
-// Get follow statistics
-router.get("/:userId/stats", getFollowStats);
 
 export default router;

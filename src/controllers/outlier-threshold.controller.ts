@@ -4,7 +4,7 @@ import { OutlierThreshold } from "../models/outlier_threshold.model.js";
 
 export const createThreshold = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { reactionThreshold, commentThreshold, shareThreshold, version, enabled } = req.body;
+        const { reactionThreshold, commentThreshold, shareThreshold, version } = req.body;
 
         // Validate input
         if (!reactionThreshold || !commentThreshold || !shareThreshold || !version) {
@@ -29,8 +29,7 @@ export const createThreshold = async (req: Request, res: Response, next: NextFun
             reactionThreshold,
             commentThreshold,
             shareThreshold,
-            version,
-            enabled: enabled === true // Only enable if explicitly set to true
+            version
         });
 
         return res.status(201).json({ 
